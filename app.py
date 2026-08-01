@@ -1,5 +1,6 @@
 import io
 import os
+import pandas as pd
 import streamlit as st
 from parser import cargar_banco_preguntas, estructurar_15_modulos
 
@@ -15,6 +16,18 @@ st.title("🛡️ Simulador de Examen PNP - 15 Módulos")
 
 # RUTA DEL ARCHIVO DEFINIDO
 NOMBRE_ARCHIVO_DOCX = "banco_preguntas.docx"
+
+# ---------------------------------------------------------
+# FUNCIÓN AUXILIAR DE COMPARACIÓN DE RESPUESTAS
+# ---------------------------------------------------------
+def es_igual(val1, val2):
+    if not val1 or not val2:
+        return False
+    # Normaliza eliminando espacios extra, puntos finales y convirtiendo a mayúsculas
+    n1 = str(val1).strip().rstrip('.').strip().upper()
+    n2 = str(val2).strip().rstrip('.').strip().upper()
+    return n1 == n2
+
 
 # ---------------------------------------------------------
 # FUNCIÓN PARA GENERAR EL REPORTE PDF DE ERRORES
@@ -49,14 +62,7 @@ def generar_pdf_reporte(modulo_nombre, nota, correctas, incorrectas, sin_respond
     for q in preguntas:
         num = q["num"]
         user_ans = respuestas_usuario.get(num)
-        def es_igual(val1, val2):
-    if not val1 or not val2:
-        return False
-    n1 = str(val1).strip().rstrip('.').strip().upper()
-    n2 = str(val2).strip().rstrip('.').strip().upper()
-    return n1 == n2
-
-es_correcta = (user_ans is not None and es_igual(user_ans, q["correcta"]))
+        es_correcta = (user_ans is not None and es_igual(user_ans, q["correcta"]))
         if not es_correcta:
             preguntas_revision.append((q, user_ans))
             
@@ -135,15 +141,7 @@ if total_preguntas == 0:
 
 elif st.session_state.examen_finalizado:
     # Cálculo de Resultados
-    def es_igual(val1, val2):
-    if not val1 or not val2:
-        return False
-    # Normaliza eliminando espacios extra, puntos finales y convirtiendo a mayúsculas
-    n1 = str(val1).strip().rstrip('.').strip().upper()
-    n2 = str(val2).strip().rstrip('.').strip().upper()
-    return n1 == n2
     correctas = sum(1 for q in preguntas if es_igual(st.session_state.respuestas_modulo.get(q["num"]), q["correcta"]))
-    
     sin_responder = sum(1 for q in preguntas if q["num"] not in st.session_state.respuestas_modulo)
     incorrectas = total_preguntas - correctas - sin_responder
     nota = (correctas / total_preguntas) * 20 if total_preguntas > 0 else 0
@@ -157,14 +155,14 @@ elif st.session_state.examen_finalizado:
     
     st.subheader(f"Nota Final: **{nota:.2f} / 20**")
     st.markdown("---")
-    import pandas as pd
     
     st.subheader("📋 DETALLE DE PREGUNTAS A REVISAR")
     filas_tabla = []
     for q in preguntas:
         user_ans = st.session_state.respuestas_modulo.get(q["num"], "Sin responder")
         rpta_correcta = q["correcta"]
-        if user_ans != rpta_correcta:
+        # Filtrar solo las incorrectas o sin responder usando la comparación flexible
+        if not es_igual(user_ans, rpta_correcta):
             filas_tabla.append({
                 "#": q["num"],
                 "Enunciado de la Pregunta": q["pregunta"],
@@ -178,9 +176,6 @@ elif st.session_state.examen_finalizado:
         st.info("¡Respondiste todas las preguntas correctamente!")
     st.markdown("---")
 
-
-    
-    
     # PDF de retroalimentación
     pdf_bytes = generar_pdf_reporte(
         modulo_seleccionado,
