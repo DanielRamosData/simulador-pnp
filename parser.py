@@ -1,107 +1,117 @@
 import docx
 import re
 
-def extraer_texto_secuencial(doc):
-    texto = []
+def extraer_lineas_puras(doc):
+    """
+    Extrae todas las líneas de texto del documento (de párrafos y tablas)
+    manteniendo el orden secuencial estricto.
+    """
+    lineas = []
     for element in doc.element.body:
         if element.tag.endswith('p'):
             p = docx.text.paragraph.Paragraph(element, doc)
-            if p.text.strip():
-                texto.append(p.text.strip())
+            txt = p.text.strip()
+            if txt:
+                lineas.append(txt)
         elif element.tag.endswith('tbl'):
             table = docx.table.Table(element, doc)
             for row in table.rows:
-                celdas = [c.text.strip() for c in row.cells if c.text.strip()]
-                if celdas:
-                    texto.append(" | ".join(celdas))
-                    
-    return "\n".join(texto)
+                for cell in row.cells:
+                    txt = cell.text.strip()
+                    if txt:
+                        # Si hay varias líneas dentro de la celda, las agregamos individualmente
+                        for sub_linea in txt.split('\n'):
+                            if sub_linea.strip():
+                                lineas.append(sub_linea.strip())
+    return lineas
 
 def cargar_banco_preguntas(file_path):
     doc = docx.Document(file_path)
-    full_text = extraer_texto_secuencial(doc)
-    
-    # Separar bloques por número de pregunta (ej: "1000.", "1001.", "1000.-")
-    raw_blocks = re.split(r'\n(?=\d+[\.\)\-])', full_text)
+    lineas = extraer_lineas_puras(doc)
     
     questions = []
+    q_actual = None
     
-    for block in raw_blocks:
-        block = block.strip()
-        if not block:
+    # Expresión para detectar el inicio de una pregunta (ej: "1000.", "1001.-")
+    regex_num = re.compile(r'^(\d+)[\.\)\-]\s*(.*)')
+    # Expresión para detectar respuesta
+    regex_resp = re.compile(r'^\b(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA)\b\s*[\.:\-\_]*\s*(.*)', re.IGNORECASE)
+    # Expresiones para metadatos
+    regex_ubic = re.compile(r'^UBICACI[ÓO]N\s*:?\s*(.*)', re.IGNORECASE)
+    regex_cod = re.compile(r'^C[ÓO]DIGO\s*:?\s*(.*)', re.IGNORECASE)
+
+    for linea in lineas:
+        match_num = regex_num.match(linea)
+        
+        # 1. Si encontramos el inicio de una NUEVA pregunta
+        if match_num:
+            # Si ya teníamos una pregunta en proceso, la guardamos
+            if q_actual:
+                questions.append(q_actual)
+            
+            num_p = int(match_num.group(1))
+            resto_texto = match_num.group(2).strip()
+            
+            q_actual = {
+                "num": num_p,
+                "pregunta": resto_texto,
+                "opciones": [],
+                "correcta": "",
+                "modulo": "",
+                "codigo_id": f"PNP-{num_p}",
+                "_leyendo_resp": False
+            }
             continue
-            
-        q_match = re.match(r'^(\d+)[\.\)\-]\s*(.*)', block, re.DOTALL)
-        if not q_match:
+
+        if not q_actual:
             continue
-            
-        q_num = int(q_match.group(1))
-        content = q_match.group(2).strip()
-        
-        # -------------------------------------------------------------
-        # 1. BÚSQUEDA MULTI-PATRÓN DE LA RESPUESTA
-        # -------------------------------------------------------------
-        correcta_val = ""
-        
-        # Patrón amplio para detectar cualquier encabezado de respuesta
-        patron_ans = r'\b(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA|RPTA\.|RPTA\s*:)\b'
-        pos_resp = re.search(patron_ans, content, re.IGNORECASE)
-        
-        if pos_resp:
-            sub_str = content[pos_resp.start():]
-            # Limpiar etiquetas y puntuaciones iniciales
-            sub_str = re.sub(r'^(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA|RPTA\.|RPTA\s*:)\s*[\.:\-\_]*\s*', '', sub_str, flags=re.IGNORECASE).strip()
-            
-            # Cortar si topamos con metadatos de ubicación o código
-            corte_meta = re.split(r'\b(UBICACI[ÓO]N|C[ÓO]DIGO|TEMA|MODULO):', sub_str, flags=re.IGNORECASE)
-            sub_str = corte_meta[0].strip()
-            
-            lineas_resp = [l.strip() for l in sub_str.split('\n') if l.strip()]
-            if lineas_resp:
-                val = lineas_resp[0]
-                if '|' in val:
-                    val = val.split('|')[0].strip()
-                correcta_val = re.sub(r'^[»>•\-\*\s]+', '', val).strip()
-        else:
-            # Estrategia de respaldo: Buscar si alguna línea interna empieza con "R:" o similar
-            lineas_bloque = [l.strip() for l in content.split('\n') if l.strip()]
-            for l in lineas_bloque:
-                m_r = re.match(r'^(?:R|Rpta|Resp)\s*[\.:\-]\s*(.*)', l, re.IGNORECASE)
-                if m_r:
-                    correcta_val = m_r.group(1).strip()
-                    break
 
-        # -------------------------------------------------------------
-        # 2. EXTRAER METADATOS (UBICACIÓN Y CÓDIGO)
-        # -------------------------------------------------------------
-        modulo_val = ""
-        ubic_match = re.search(r'UBICACI[ÓO]N\s*:?\s*([^C\n]+)', content, re.IGNORECASE)
-        if ubic_match:
-            modulo_val = ubic_match.group(1).strip()
+        # 2. Si detectamos la etiqueta RESPUESTA:
+        match_resp = regex_resp.match(linea)
+        if match_resp:
+            val_resp = match_resp.group(2).strip()
+            q_actual["correcta"] = re.sub(r'^[»>•\-\*\s]+', '', val_resp).strip()
+            q_actual["_leyendo_resp"] = True
+            continue
 
-        codigo_val = f"PNP-{q_num}"
-        cod_match = re.search(r'C[ÓO]DIGO\s*:?\s*(\d+)', content, re.IGNORECASE)
-        if cod_match:
-            codigo_val = cod_match.group(1).strip()
+        # 3. Si detectamos UBICACIÓN:
+        match_ubic = regex_ubic.match(linea)
+        if match_ubic:
+            q_actual["modulo"] = match_ubic.group(1).strip()
+            q_actual["_leyendo_resp"] = False
+            continue
 
-        # -------------------------------------------------------------
-        # 3. EXTRAER ENUNCIADO Y OPCIONES
-        # -------------------------------------------------------------
-        texto_antes = content[:pos_resp.start()].strip() if pos_resp else content
-        lineas = [l.strip() for l in texto_antes.split('\n') if l.strip()]
-        
-        pregunta_texto = lineas[0] if lineas else ""
-        opciones = [re.sub(r'^[»>•\-\*\s]+', '', l).strip() for l in lineas[1:] if l.strip()]
+        # 4. Si detectamos CÓDIGO:
+        match_cod = regex_cod.match(linea)
+        if match_cod:
+            val_c = match_cod.group(1).strip()
+            if val_c:
+                q_actual["codigo_id"] = val_c
+            q_actual["_leyendo_resp"] = False
+            continue
 
-        questions.append({
-            "num": q_num,
-            "pregunta": pregunta_texto,
-            "opciones": opciones,
-            "correcta": correcta_val,
-            "modulo": modulo_val,
-            "codigo_id": codigo_val
-        })
-        
+        # 5. Si no es etiqueta y aún no hay respuesta -> Es enunciado u opción
+        if not q_actual["correcta"]:
+            # Si el enunciado estaba vacío lo asignamos, de lo contrario es una opción
+            if not q_actual["pregunta"]:
+                q_actual["pregunta"] = linea
+            else:
+                opc_limpia = re.sub(r'^[»>•\-\*\s]+', '', linea).strip()
+                if opc_limpia:
+                    q_actual["opciones"].append(opc_limpia)
+        # Si ya estábamos leyendo la respuesta y esta ocupa más de una línea (multilínea)
+        elif q_actual["_leyendo_resp"] and not match_ubic and not match_cod:
+            # Si la respuesta es de varias líneas, concatenamos
+            q_actual["correcta"] += " " + linea.strip()
+
+    # Guardar la última pregunta del archivo
+    if q_actual:
+        questions.append(q_actual)
+
+    # Limpieza final de llaves auxiliares
+    for q in questions:
+        q.pop("_leyendo_resp", None)
+
     return questions
 
 def estructurar_15_modulos(preguntas, preguntas_por_modulo=100):
