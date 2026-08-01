@@ -22,15 +22,25 @@ def extraer_lineas_puras(doc):
 
 def limpiar_texto_respuesta(cadena):
     """
-    Recibe un texto tipo 'ALLANAMIENTO ILEGAL DE DOMICILIO. (ART: 160)** [LIBRO...]'
-    y devuelve solo el nombre del delito: 'ALLANAMIENTO ILEGAL DE DOMICILIO'
+    Limpia prefijos como UBICACIÓN:, CÓDIGO:, citas legales y caracteres especiales.
+    Ej: "UBICACIÓN: CÓDIGO: NUEVAS SUSTANCIAS PSICOACTIVAS." 
+    -> "NUEVAS SUSTANCIAS PSICOACTIVAS"
     """
     if not cadena:
         return ""
-    # Cortar antes de (ART:, [, **, o el primer paréntesis/corchete de metadatos
+    
+    # 1. Remover prefijos de UBICACIÓN / CÓDIGO al inicio
+    cadena = re.sub(r'^(UBICACI[ÓO]N\s*:?\s*|C[ÓO]DIGO\s*:?\s*)+', '', cadena, flags=re.IGNORECASE).strip()
+    
+    # 2. Cortar antes de referencias legales como (ART:, [, **, etc.
     partes = re.split(r'(\(ART:|\[|\*\*|\()', cadena, flags=re.IGNORECASE)
-    delito = partes[0].strip().rstrip('.')
-    return re.sub(r'^[»>•\-\*\s]+', '', delito).strip()
+    delito = partes[0].strip()
+    
+    # 3. Remover puntos finales, viñetas y espacios extra
+    delito = re.sub(r'^[»>•\-\*\s]+', '', delito)
+    delito = delito.rstrip('.').strip()
+    
+    return delito
 
 def cargar_banco_preguntas(file_path):
     doc = docx.Document(file_path)
@@ -41,16 +51,13 @@ def cargar_banco_preguntas(file_path):
     
     regex_num = re.compile(r'^(\d+)[\.\)\-]\s*(.*)')
     regex_resp = re.compile(r'^\b(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA)\b\s*[\.:\-\_]*\s*(.*)', re.IGNORECASE)
-    
-    # Captura lineas como: UBICACIÓN: CÓDIGO: LESIONES CULPOSAS. (ART: 124)...
-    regex_ubic_cod = re.compile(r'^UBICACI[ÓO]N\s*:?\s*C[ÓO]DIGO\s*:?\s*(.*)', re.IGNORECASE)
-    regex_ubic = re.compile(r'^UBICACI[ÓO]N\s*:?\s*(.*)', re.IGNORECASE)
+    regex_ubic_cod = re.compile(r'^UBICACI[ÓO]N\s*:?\s*(C[ÓO]DIGO\s*:?)?\s*(.*)', re.IGNORECASE)
     regex_cod = re.compile(r'^C[ÓO]DIGO\s*:?\s*(.*)', re.IGNORECASE)
 
     for linea in lineas:
         match_num = regex_num.match(linea)
         
-        # 1. Nueva pregunta
+        # 1. Inicio de nueva pregunta
         if match_num:
             if q_actual:
                 questions.append(q_actual)
@@ -80,11 +87,11 @@ def cargar_banco_preguntas(file_path):
             q_actual["_leyendo_resp"] = True
             continue
 
-        # 3. Si es una línea combinada UBICACIÓN: CÓDIGO:
+        # 3. Si es una línea que empieza con UBICACIÓN: (con o sin CÓDIGO:)
         match_comb = regex_ubic_cod.match(linea)
         if match_comb:
-            contenido = match_comb.group(1).strip()
-            # Si NO se capturó una respuesta antes, la extraemos de esta línea
+            contenido = match_comb.group(2).strip() if match_comb.group(2) else linea
+            # Si aún NO tenemos respuesta asignada, limpiamos e insertamos la respuesta
             if not q_actual["correcta"]:
                 q_actual["correcta"] = limpiar_texto_respuesta(contenido)
             
@@ -92,13 +99,7 @@ def cargar_banco_preguntas(file_path):
             q_actual["_leyendo_resp"] = False
             continue
 
-        # 4. Ubicación o Código individual (por si vienen separados)
-        match_ubic = regex_ubic.match(linea)
-        if match_ubic:
-            q_actual["modulo"] = match_ubic.group(1).strip()
-            q_actual["_leyendo_resp"] = False
-            continue
-
+        # 4. Línea de CÓDIGO individual
         match_cod = regex_cod.match(linea)
         if match_cod:
             val_c = match_cod.group(1).strip()
@@ -115,8 +116,8 @@ def cargar_banco_preguntas(file_path):
                 opc_limpia = re.sub(r'^[»>•\-\*\s]+', '', linea).strip()
                 if opc_limpia:
                     q_actual["opciones"].append(opc_limpia)
-        elif q_actual["_leyendo_resp"] and not match_ubic and not match_cod:
-            # Concatenar si la respuesta era de varias líneas
+        elif q_actual["_leyendo_resp"] and not match_comb and not match_cod:
+            # Concatenar si la respuesta continuaba en otra línea
             q_actual["correcta"] += " " + limpiar_texto_respuesta(linea)
 
     if q_actual:
