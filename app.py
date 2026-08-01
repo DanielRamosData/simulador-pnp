@@ -49,7 +49,14 @@ def generar_pdf_reporte(modulo_nombre, nota, correctas, incorrectas, sin_respond
     for q in preguntas:
         num = q["num"]
         user_ans = respuestas_usuario.get(num)
-        es_correcta = (user_ans is not None and user_ans.strip().upper() == str(q["correcta"]).strip().upper())
+        def es_igual(val1, val2):
+    if not val1 or not val2:
+        return False
+    n1 = str(val1).strip().rstrip('.').strip().upper()
+    n2 = str(val2).strip().rstrip('.').strip().upper()
+    return n1 == n2
+
+es_correcta = (user_ans is not None and es_igual(user_ans, q["correcta"]))
         if not es_correcta:
             preguntas_revision.append((q, user_ans))
             
@@ -128,7 +135,15 @@ if total_preguntas == 0:
 
 elif st.session_state.examen_finalizado:
     # Cálculo de Resultados
-    correctas = sum(1 for q in preguntas if st.session_state.respuestas_modulo.get(q["num"]) == q["correcta"])
+    def es_igual(val1, val2):
+    if not val1 or not val2:
+        return False
+    # Normaliza eliminando espacios extra, puntos finales y convirtiendo a mayúsculas
+    n1 = str(val1).strip().rstrip('.').strip().upper()
+    n2 = str(val2).strip().rstrip('.').strip().upper()
+    return n1 == n2
+    correctas = sum(1 for q in preguntas if es_igual(st.session_state.respuestas_modulo.get(q["num"]), q["correcta"]))
+    
     sin_responder = sum(1 for q in preguntas if q["num"] not in st.session_state.respuestas_modulo)
     incorrectas = total_preguntas - correctas - sin_responder
     nota = (correctas / total_preguntas) * 20 if total_preguntas > 0 else 0
