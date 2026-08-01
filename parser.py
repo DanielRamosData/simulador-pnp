@@ -6,7 +6,7 @@ def cargar_banco_preguntas(file_path):
     questions = []
     current_q = None
     
-    # Expresión regular para capturar la numeración inicial (ej: "1.", "1.-", "1)")
+    # Expresión regular para detectar el número de pregunta al inicio de la línea (ej: "1. TODA PERSONA...")
     q_pattern = re.compile(r'^\s*(\d+)[\.\)\-]\s*(.*)', re.IGNORECASE)
     
     for paragraph in doc.paragraphs:
@@ -14,12 +14,12 @@ def cargar_banco_preguntas(file_path):
         if not text:
             continue
         
-        # 1. Detectar inicio de una nueva pregunta
+        # 1. Detectar si inicia una nueva pregunta
         q_match = q_pattern.match(text)
         if q_match:
-            # Guardar la pregunta anterior procesada
+            # Guardar la pregunta anterior si ya teníamos una armada
             if current_q and current_q.get("pregunta"):
-                # Si no capturó respuesta explícita, usa la primera alternativa como fallback
+                # Si no se capturó la respuesta explícita, usar la primera opción por defecto
                 if not current_q["correcta"] and current_q["opciones"]:
                     current_q["correcta"] = current_q["opciones"][0]
                 questions.append(current_q)
@@ -40,32 +40,30 @@ def cargar_banco_preguntas(file_path):
         if current_q is not None:
             text_upper = text.upper()
             
-            # 2. Detectar línea de RESPUESTA:
+            # 2. Capturar RESPUESTA:
             if text_upper.startswith("RESPUESTA:"):
                 current_q["correcta"] = text.split(":", 1)[1].strip()
                 continue
                 
-            # 3. Detectar datos de UBICACIÓN:
+            # 3. Capturar UBICACIÓN:
             if text_upper.startswith("UBICACIÓN:") or text_upper.startswith("UBICACION:"):
                 current_q["modulo"] = text.split(":", 1)[1].strip()
                 continue
                 
-            # 4. Detectar datos de CÓDIGO:
+            # 4. Capturar CÓDIGO:
             if text_upper.startswith("CÓDIGO:") or text_upper.startswith("CODIGO:"):
                 current_q["codigo_id"] = text.split(":", 1)[1].strip()
                 continue
             
-            # 5. Detectar alternativas eliminando viñetas (», >, -, •, etc.)
-            opt_clean = re.sub(r'^[»>•\-\*\s]+', '', text).strip()
+            # 5. Todo texto que no sea metadato se procesa como opción o continuación de la pregunta
+            # Limpiamos viñetas o símbolos raros al inicio si existen
+            clean_text = re.sub(r'^[»>•\-\*\s]+', '', text).strip()
             
-            # Si se eliminó una viñeta o si ya estábamos recolectando opciones
-            if opt_clean != text or len(current_q["opciones"]) > 0:
-                current_q["opciones"].append(opt_clean)
-            else:
-                # Si aún no hay opciones, es continuación del texto de la pregunta
-                current_q["pregunta"] += " " + text
+            # Si aún no hemos llegado a "RESPUESTA:", esta línea es una alternativa
+            if clean_text:
+                current_q["opciones"].append(clean_text)
 
-    # Guardar la última pregunta del archivo
+    # Guardar la última pregunta del archivo Word
     if current_q and current_q.get("pregunta"):
         if not current_q["correcta"] and current_q["opciones"]:
             current_q["correcta"] = current_q["opciones"][0]
