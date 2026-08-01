@@ -6,26 +6,22 @@ def extraer_lineas_puras(doc):
     for element in doc.element.body:
         if element.tag.endswith('p'):
             p = docx.text.paragraph.Paragraph(element, doc)
-            txt = p.text.strip()
+            txt = p.text.replace('\xa0', ' ').strip()
             if txt:
                 lineas.append(txt)
         elif element.tag.endswith('tbl'):
             table = docx.table.Table(element, doc)
             for row in table.rows:
                 for cell in row.cells:
-                    txt = cell.text.strip()
+                    txt = cell.text.replace('\xa0', ' ').strip()
                     if txt:
                         for sub_linea in txt.split('\n'):
-                            if sub_linea.strip():
-                                lineas.append(sub_linea.strip())
+                            sub_txt = sub_linea.strip()
+                            if sub_txt:
+                                lineas.append(sub_txt)
     return lineas
 
 def limpiar_texto_respuesta(cadena):
-    """
-    Limpia prefijos como UBICACIÓN:, CÓDIGO:, citas legales y caracteres especiales.
-    Ej: "UBICACIÓN: CÓDIGO: NUEVAS SUSTANCIAS PSICOACTIVAS." 
-    -> "NUEVAS SUSTANCIAS PSICOACTIVAS"
-    """
     if not cadena:
         return ""
     
@@ -36,11 +32,9 @@ def limpiar_texto_respuesta(cadena):
     partes = re.split(r'(\(ART:|\[|\*\*|\()', cadena, flags=re.IGNORECASE)
     delito = partes[0].strip()
     
-    # 3. Remover puntos finales, viñetas y espacios extra
+    # 3. Remover viñetas, puntos finales y espacios
     delito = re.sub(r'^[»>•\-\*\s]+', '', delito)
-    delito = delito.rstrip('.').strip()
-    
-    return delito
+    return delito.rstrip('.').strip()
 
 def cargar_banco_preguntas(file_path):
     doc = docx.Document(file_path)
@@ -49,13 +43,13 @@ def cargar_banco_preguntas(file_path):
     questions = []
     q_actual = None
     
-    regex_num = re.compile(r'^(\d+)[\.\)\-]\s*(.*)')
-    regex_resp = re.compile(r'^\b(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA)\b\s*[\.:\-\_]*\s*(.*)', re.IGNORECASE)
-    regex_ubic_cod = re.compile(r'^UBICACI[ÓO]N\s*:?\s*(C[ÓO]DIGO\s*:?)?\s*(.*)', re.IGNORECASE)
-    regex_cod = re.compile(r'^C[ÓO]DIGO\s*:?\s*(.*)', re.IGNORECASE)
+    regex_num = re.compile(r'^\s*(\d+)[\.\)\-]\s*(.*)')
+    regex_resp = re.compile(r'\b(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA)\b\s*[\.:\-\_]*\s*(.*)', re.IGNORECASE)
+    regex_ubic_cod = re.compile(r'\bUBICACI[ÓO]N\b\s*:?\s*(C[ÓO]DIGO\s*:?)?\s*(.*)', re.IGNORECASE)
+    regex_cod = re.compile(r'\bC[ÓO]DIGO\b\s*:?\s*(.*)', re.IGNORECASE)
 
     for linea in lineas:
-        match_num = regex_num.match(linea)
+        match_num = regex_num.search(linea)
         
         # 1. Inicio de nueva pregunta
         if match_num:
@@ -79,19 +73,18 @@ def cargar_banco_preguntas(file_path):
         if not q_actual:
             continue
 
-        # 2. Si es una línea que empieza con RESPUESTA:
-        match_resp = regex_resp.match(linea)
+        # 2. Detección de RESPUESTA:
+        match_resp = regex_resp.search(linea)
         if match_resp:
             val_resp = match_resp.group(2).strip()
             q_actual["correcta"] = limpiar_texto_respuesta(val_resp)
             q_actual["_leyendo_resp"] = True
             continue
 
-        # 3. Si es una línea que empieza con UBICACIÓN: (con o sin CÓDIGO:)
-        match_comb = regex_ubic_cod.match(linea)
+        # 3. Detección de UBICACIÓN: / CÓDIGO:
+        match_comb = regex_ubic_cod.search(linea)
         if match_comb:
             contenido = match_comb.group(2).strip() if match_comb.group(2) else linea
-            # Si aún NO tenemos respuesta asignada, limpiamos e insertamos la respuesta
             if not q_actual["correcta"]:
                 q_actual["correcta"] = limpiar_texto_respuesta(contenido)
             
@@ -99,8 +92,8 @@ def cargar_banco_preguntas(file_path):
             q_actual["_leyendo_resp"] = False
             continue
 
-        # 4. Línea de CÓDIGO individual
-        match_cod = regex_cod.match(linea)
+        # 4. Detección de CÓDIGO: individual
+        match_cod = regex_cod.search(linea)
         if match_cod:
             val_c = match_cod.group(1).strip()
             if val_c:
@@ -108,7 +101,7 @@ def cargar_banco_preguntas(file_path):
             q_actual["_leyendo_resp"] = False
             continue
 
-        # 5. Acumular Enunciado u Opciones
+        # 5. Lectura de Enunciado, Opciones o Respuesta multilínea
         if not q_actual["correcta"]:
             if not q_actual["pregunta"]:
                 q_actual["pregunta"] = linea
@@ -117,7 +110,7 @@ def cargar_banco_preguntas(file_path):
                 if opc_limpia:
                     q_actual["opciones"].append(opc_limpia)
         elif q_actual["_leyendo_resp"] and not match_comb and not match_cod:
-            # Concatenar si la respuesta continuaba en otra línea
+            # Concatenar respuesta si venía en líneas subsiguientes
             q_actual["correcta"] += " " + limpiar_texto_respuesta(linea)
 
     if q_actual:
