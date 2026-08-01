@@ -3,72 +3,67 @@ import re
 
 def cargar_banco_preguntas(file_path):
     doc = docx.Document(file_path)
+    
+    # 1. Unir todos los párrafos en un solo texto con saltos de línea
+    full_text = "\n".join([p.text.strip() for p in doc.paragraphs if p.text.strip()])
+    
+    # 2. Separar el texto completo por cada número de pregunta (ej: "1000.", "1001.")
+    # Usamos lookahead para dividir justo antes de un número al inicio de línea
+    raw_blocks = re.split(r'\n(?=\d+[\.\)\-])', full_text)
+    
     questions = []
-    current_q = None
     
-    # Expresión regular para el número de pregunta (ej: "1000. COMETE DELITO...")
-    q_pattern = re.compile(r'^\s*(\d+)[\.\)\-]\s*(.*)', re.IGNORECASE)
-    
-    for paragraph in doc.paragraphs:
-        text = paragraph.text.strip()
-        if not text:
+    for block in raw_blocks:
+        block = block.strip()
+        if not block:
             continue
+            
+        # Validar si el bloque empieza con número de pregunta (ej: "1000. COMETE...")
+        q_match = re.match(r'^(\d+)[\.\)\-]\s*(.*)', block, re.DOTALL)
+        if not q_match:
+            continue
+            
+        q_num = int(q_match.group(1))
+        content = q_match.group(2).strip()
         
-        # 1. Detectar inicio de una nueva pregunta
-        q_match = q_pattern.match(text)
-        if q_match:
-            # Guardar la pregunta anterior si existía
-            if current_q and current_q.get("pregunta"):
-                # Si por alguna razón la respuesta quedó vacía, usar la primera opción
-                if not current_q["correcta"] and current_q["opciones"]:
-                    current_q["correcta"] = current_q["opciones"][0]
-                questions.append(current_q)
-            
-            q_num = int(q_match.group(1))
-            q_text = q_match.group(2).strip()
-            
-            current_q = {
-                "num": q_num,
-                "pregunta": q_text,
-                "opciones": [],
-                "correcta": "",
-                "modulo": "",
-                "codigo_id": f"PNP-{q_num}"
-            }
-            continue
-            
-        if current_q is not None:
-            text_upper = text.upper()
-            
-            # 2. Capturar línea de RESPUESTA:
-            if text_upper.startswith("RESPUESTA:"):
-                # Extraer el texto tras "RESPUESTA:"
-                ans_text = text.split(":", 1)[1].strip()
-                # Eliminar metadatos si vienen pegados en la misma línea (UBICACIÓN, CÓDIGO)
-                ans_clean = re.split(r'\b(UBICACIÓ|UBICACIO|CÓDIGO|CODIGO):', ans_text, flags=re.IGNORECASE)[0].strip()
-                current_q["correcta"] = ans_clean
-                continue
-                
-            # 3. Capturar o descartar UBICACIÓN:
-            if text_upper.startswith("UBICACIÓN:") or text_upper.startswith("UBICACION:"):
-                current_q["modulo"] = text.split(":", 1)[1].strip()
-                continue
-                
-            # 4. Capturar o descartar CÓDIGO:
-            if text_upper.startswith("CÓDIGO:") or text_upper.startswith("CODIGO:"):
-                current_q["codigo_id"] = text.split(":", 1)[1].strip()
-                continue
-            
-            # 5. Capturar alternativas (excluyendo cualquier metadato)
-            clean_opt = re.sub(r'^[»>•\-\*\s]+', '', text).strip()
+        # 3. Extraer RESPUESTA: directamente mediante Regex
+        # Busca "RESPUESTA:" y captura el texto exacto hasta el fin de línea
+        ans_match = re.search(r'RESPUESTA:\s*(.*)', content, re.IGNORECASE)
+        correcta_val = ""
+        if ans_match:
+            # Tomar solo la primera línea tras "RESPUESTA:" por si hay saltos
+            linea_respuesta = ans_match.group(1).split('\n')[0].strip()
+            # Limpiar posibles etiquetas pegadas o viñetas
+            correcta_val = re.sub(r'^[»>•\-\*\s]+', '', linea_respuesta).strip()
+        
+        # 4. Extraer ENUNCIADO y OPCIONES
+        # Todo lo que esté antes de "RESPUESTA:" pertenece al enunciado y las alternativas
+        partes_antes_respuesta = re.split(r'RESPUESTA:', content, flags=re.IGNORECASE)[0].strip()
+        lineas = [l.strip() for l in partes_antes_respuesta.split('\n') if l.strip()]
+        
+        pregunta_texto = lineas[0] if lineas else ""
+        opciones = []
+        
+        for linea in lineas[1:]:
+            clean_opt = re.sub(r'^[»>•\-\*\s]+', '', linea).strip()
             if clean_opt:
-                current_q["opciones"].append(clean_opt)
-
-    # Guardar la última pregunta del archivo
-    if current_q and current_q.get("pregunta"):
-        if not current_q["correcta"] and current_q["opciones"]:
-            current_q["correcta"] = current_q["opciones"][0]
-        questions.append(current_q)
+                opciones.append(clean_opt)
+                
+        # 5. Extraer UBICACIÓN y CÓDIGO si existen en el bloque
+        ubic_match = re.search(r'UBICACI[ÓO]N:\s*(.*)', content, re.IGNORECASE)
+        cod_match = re.search(r'C[ÓO]DIGO:\s*(.*)', content, re.IGNORECASE)
+        
+        modulo_val = ubic_match.group(1).split('\n')[0].strip() if ubic_match else ""
+        codigo_val = cod_match.group(1).split('\n')[0].strip() if cod_match else f"PNP-{q_num}"
+        
+        questions.append({
+            "num": q_num,
+            "pregunta": pregunta_texto,
+            "opciones": opciones,
+            "correcta": correcta_val,
+            "modulo": modulo_val,
+            "codigo_id": codigo_val
+        })
         
     return questions
 
