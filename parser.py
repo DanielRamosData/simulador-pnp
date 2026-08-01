@@ -6,7 +6,7 @@ def cargar_banco_preguntas(file_path):
     questions = []
     current_q = None
     
-    # Detecta números de cualquier longitud (ej: "1.", "1000.", "1001.")
+    # Expresión regular para el número de pregunta (ej: "1000. COMETE DELITO...")
     q_pattern = re.compile(r'^\s*(\d+)[\.\)\-]\s*(.*)', re.IGNORECASE)
     
     for paragraph in doc.paragraphs:
@@ -14,11 +14,12 @@ def cargar_banco_preguntas(file_path):
         if not text:
             continue
         
-        # 1. Detectar inicio de nueva pregunta
+        # 1. Detectar inicio de una nueva pregunta
         q_match = q_pattern.match(text)
         if q_match:
+            # Guardar la pregunta anterior si existía
             if current_q and current_q.get("pregunta"):
-                # Si no se capturó la respuesta, usar la primera opción
+                # Si por alguna razón la respuesta quedó vacía, usar la primera opción
                 if not current_q["correcta"] and current_q["opciones"]:
                     current_q["correcta"] = current_q["opciones"][0]
                 questions.append(current_q)
@@ -39,28 +40,31 @@ def cargar_banco_preguntas(file_path):
         if current_q is not None:
             text_upper = text.upper()
             
-            # 2. Ignorar líneas de UBICACIÓN y CÓDIGO para que no entren como alternativas ni respuestas
-            if text_upper.startswith(("UBICACIÓN:", "UBICACION:", "CÓDIGO:", "CODIGO:")):
-                if text_upper.startswith(("UBICACIÓN:", "UBICACION:")):
-                    current_q["modulo"] = text.split(":", 1)[1].strip()
-                elif text_upper.startswith(("CÓDIGO:", "CODIGO:")):
-                    current_q["codigo_id"] = text.split(":", 1)[1].strip()
+            # 2. Capturar línea de RESPUESTA:
+            if text_upper.startswith("RESPUESTA:"):
+                # Extraer el texto tras "RESPUESTA:"
+                ans_text = text.split(":", 1)[1].strip()
+                # Eliminar metadatos si vienen pegados en la misma línea (UBICACIÓN, CÓDIGO)
+                ans_clean = re.split(r'\b(UBICACIÓ|UBICACIO|CÓDIGO|CODIGO):', ans_text, flags=re.IGNORECASE)[0].strip()
+                current_q["correcta"] = ans_clean
                 continue
                 
-            # 3. Capturar RESPUESTA:
-            if text_upper.startswith("RESPUESTA:"):
-                raw_ans = text.split(":", 1)[1].strip()
-                # Limpiar viñetas si la respuesta las traía
-                clean_ans = re.sub(r'^[»>•\-\*\s]+', '', raw_ans).strip()
-                current_q["correcta"] = clean_ans
+            # 3. Capturar o descartar UBICACIÓN:
+            if text_upper.startswith("UBICACIÓN:") or text_upper.startswith("UBICACION:"):
+                current_q["modulo"] = text.split(":", 1)[1].strip()
+                continue
+                
+            # 4. Capturar o descartar CÓDIGO:
+            if text_upper.startswith("CÓDIGO:") or text_upper.startswith("CODIGO:"):
+                current_q["codigo_id"] = text.split(":", 1)[1].strip()
                 continue
             
-            # 4. Capturar Alternativas
+            # 5. Capturar alternativas (excluyendo cualquier metadato)
             clean_opt = re.sub(r'^[»>•\-\*\s]+', '', text).strip()
             if clean_opt:
                 current_q["opciones"].append(clean_opt)
 
-    # Guardar la última pregunta procesada
+    # Guardar la última pregunta del archivo
     if current_q and current_q.get("pregunta"):
         if not current_q["correcta"] and current_q["opciones"]:
             current_q["correcta"] = current_q["opciones"][0]
