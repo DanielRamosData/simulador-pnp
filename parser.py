@@ -1,51 +1,60 @@
 import docx
 import re
 
-def extraer_lineas_puras(doc):
+def extraer_y_limpiar_lineas(doc):
     """
-    Extrae todas las líneas de texto del documento (de párrafos y tablas)
-    manteniendo el orden secuencial estricto.
+    Extrae las líneas del documento Word y descarta de inmediato
+    cualquier línea que contenga UBICACIÓN o CÓDIGO.
     """
-    lineas = []
+    lineas_limpias = []
+    
+    # 1. Función auxiliar para filtrar líneas no deseadas
+    def es_linea_valida(texto):
+        t = texto.strip().upper()
+        # Si contiene UBICACIÓN o CÓDIGO (o variaciones), se descarta
+        if "UBICACIÓN:" in t or "UBICACION:" in t or "CÓDIGO:" in t or "CODIGO:" in t:
+            return False
+        return True
+
+    # 2. Recorrer párrafos y tablas secuencialmente
     for element in doc.element.body:
         if element.tag.endswith('p'):
             p = docx.text.paragraph.Paragraph(element, doc)
             txt = p.text.strip()
-            if txt:
-                lineas.append(txt)
+            if txt and es_linea_valida(txt):
+                lineas_limpias.append(txt)
+                
         elif element.tag.endswith('tbl'):
             table = docx.table.Table(element, doc)
             for row in table.rows:
                 for cell in row.cells:
                     txt = cell.text.strip()
                     if txt:
-                        # Si hay varias líneas dentro de la celda, las agregamos individualmente
                         for sub_linea in txt.split('\n'):
-                            if sub_linea.strip():
-                                lineas.append(sub_linea.strip())
-    return lineas
+                            sub_l = sub_linea.strip()
+                            if sub_l and es_linea_valida(sub_l):
+                                lineas_limpias.append(sub_l)
+                                
+    return lineas_limpias
 
 def cargar_banco_preguntas(file_path):
     doc = docx.Document(file_path)
-    lineas = extraer_lineas_puras(doc)
+    # Extraemos solo las líneas útiles (sin ubicación ni código)
+    lineas = extraer_y_limpiar_lineas(doc)
     
     questions = []
     q_actual = None
     
-    # Expresión para detectar el inicio de una pregunta (ej: "1000.", "1001.-")
+    # Detectar número de pregunta (ej: "1000.", "1001.-")
     regex_num = re.compile(r'^(\d+)[\.\)\-]\s*(.*)')
-    # Expresión para detectar respuesta
+    # Detectar encabezado de respuesta
     regex_resp = re.compile(r'^\b(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA)\b\s*[\.:\-\_]*\s*(.*)', re.IGNORECASE)
-    # Expresiones para metadatos
-    regex_ubic = re.compile(r'^UBICACI[ÓO]N\s*:?\s*(.*)', re.IGNORECASE)
-    regex_cod = re.compile(r'^C[ÓO]DIGO\s*:?\s*(.*)', re.IGNORECASE)
 
     for linea in lineas:
         match_num = regex_num.match(linea)
         
-        # 1. Si encontramos el inicio de una NUEVA pregunta
+        # A) Inicio de nueva pregunta
         if match_num:
-            # Si ya teníamos una pregunta en proceso, la guardamos
             if q_actual:
                 questions.append(q_actual)
             
@@ -66,49 +75,31 @@ def cargar_banco_preguntas(file_path):
         if not q_actual:
             continue
 
-        # 2. Si detectamos la etiqueta RESPUESTA:
+        # B) Si encontramos la línea de RESPUESTA:
         match_resp = regex_resp.match(linea)
         if match_resp:
             val_resp = match_resp.group(2).strip()
+            # Limpiar viñetas si las hay
             q_actual["correcta"] = re.sub(r'^[»>•\-\*\s]+', '', val_resp).strip()
             q_actual["_leyendo_resp"] = True
             continue
 
-        # 3. Si detectamos UBICACIÓN:
-        match_ubic = regex_ubic.match(linea)
-        if match_ubic:
-            q_actual["modulo"] = match_ubic.group(1).strip()
-            q_actual["_leyendo_resp"] = False
-            continue
-
-        # 4. Si detectamos CÓDIGO:
-        match_cod = regex_cod.match(linea)
-        if match_cod:
-            val_c = match_cod.group(1).strip()
-            if val_c:
-                q_actual["codigo_id"] = val_c
-            q_actual["_leyendo_resp"] = False
-            continue
-
-        # 5. Si no es etiqueta y aún no hay respuesta -> Es enunciado u opción
+        # C) Si ya estamos capturando datos de la pregunta
         if not q_actual["correcta"]:
-            # Si el enunciado estaba vacío lo asignamos, de lo contrario es una opción
             if not q_actual["pregunta"]:
                 q_actual["pregunta"] = linea
             else:
                 opc_limpia = re.sub(r'^[»>•\-\*\s]+', '', linea).strip()
                 if opc_limpia:
                     q_actual["opciones"].append(opc_limpia)
-        # Si ya estábamos leyendo la respuesta y esta ocupa más de una línea (multilínea)
-        elif q_actual["_leyendo_resp"] and not match_ubic and not match_cod:
-            # Si la respuesta es de varias líneas, concatenamos
+        elif q_actual["_leyendo_resp"]:
+            # Si la respuesta ocupa más de una línea, la concatenamos
             q_actual["correcta"] += " " + linea.strip()
 
-    # Guardar la última pregunta del archivo
+    # Guardar la última pregunta
     if q_actual:
         questions.append(q_actual)
 
-    # Limpieza final de llaves auxiliares
     for q in questions:
         q.pop("_leyendo_resp", None)
 
