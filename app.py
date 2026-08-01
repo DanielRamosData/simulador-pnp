@@ -62,7 +62,7 @@ def generar_pdf_reporte(modulo_nombre, nota, correctas, incorrectas, sin_respond
     for q in preguntas:
         num = q["num"]
         user_ans = respuestas_usuario.get(num)
-        es_correcta = (user_ans is not None and es_igual(user_ans, q["correcta"]))
+        es_correcta = (user_ans is not None and es_igual(user_ans, q.get("correcta", "")))
         if not es_correcta:
             preguntas_revision.append((q, user_ans))
             
@@ -76,9 +76,9 @@ def generar_pdf_reporte(modulo_nombre, nota, correctas, incorrectas, sin_respond
         
         for q, user_ans in preguntas_revision:
             txt_num = str(q["num"])
-            txt_preg = Paragraph(q["pregunta"], pregunta_style)
+            txt_preg = Paragraph(str(q["pregunta"]), pregunta_style)
             txt_user = Paragraph(str(user_ans) if user_ans else "<i>Sin responder</i>", bad_ans_style)
-            txt_correct = Paragraph(str(q["correcta"]), good_ans_style)
+            txt_correct = Paragraph(str(q.get("correcta", "No detectada")), good_ans_style)
             
             tabla_datos.append([txt_num, txt_preg, txt_user, txt_correct])
             
@@ -111,6 +111,12 @@ def obtener_modulos_definidos(ruta_docx):
     banco_total = cargar_banco_preguntas(ruta_docx)
     return estructurar_15_modulos(banco_total, preguntas_por_modulo=100)
 
+# Botón en Sidebar para forzar recarga de datos si cambias el parser
+if st.sidebar.button("🧹 Limpiar Caché / Recargar Word"):
+    st.cache_data.clear()
+    st.session_state.clear()
+    st.rerun()
+
 modulos_15 = obtener_modulos_definidos(NOMBRE_ARCHIVO_DOCX)
 
 if modulos_15 is None:
@@ -141,7 +147,7 @@ if total_preguntas == 0:
 
 elif st.session_state.examen_finalizado:
     # Cálculo de Resultados
-    correctas = sum(1 for q in preguntas if es_igual(st.session_state.respuestas_modulo.get(q["num"]), q["correcta"]))
+    correctas = sum(1 for q in preguntas if es_igual(st.session_state.respuestas_modulo.get(q["num"]), q.get("correcta", "")))
     sin_responder = sum(1 for q in preguntas if q["num"] not in st.session_state.respuestas_modulo)
     incorrectas = total_preguntas - correctas - sin_responder
     nota = (correctas / total_preguntas) * 20 if total_preguntas > 0 else 0
@@ -160,18 +166,22 @@ elif st.session_state.examen_finalizado:
     filas_tabla = []
     for q in preguntas:
         user_ans = st.session_state.respuestas_modulo.get(q["num"], "Sin responder")
-        rpta_correcta = q["correcta"]
-        # Filtrar solo las incorrectas o sin responder usando la comparación flexible
+        rpta_correcta = q.get("correcta", "").strip()
+        
+        # Validar si no es correcta para mostrarla en la tabla
         if not es_igual(user_ans, rpta_correcta):
             filas_tabla.append({
                 "#": q["num"],
                 "Enunciado de la Pregunta": q["pregunta"],
                 "Tu Respuesta": user_ans,
-                "Rpta. Correcta": rpta_correcta
+                "Rpta. Correcta": rpta_correcta if rpta_correcta else "No especificada"
             })
     
     if filas_tabla:
-        st.dataframe(pd.DataFrame(filas_tabla), use_container_width=True)
+        df_revision = pd.DataFrame(filas_tabla)
+        # Forzar el orden estricto de las columnas
+        df_revision = df_revision[["#", "Enunciado de la Pregunta", "Tu Respuesta", "Rpta. Correcta"]]
+        st.dataframe(df_revision, use_container_width=True)
     else:
         st.info("¡Respondiste todas las preguntas correctamente!")
     st.markdown("---")
