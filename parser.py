@@ -1,30 +1,37 @@
 import docx
 import re
 
-def extraer_texto_completo(doc):
+def extraer_texto_secuencial(doc):
+    """
+    Lee el documento Word respetando el ORDEN REAL en el que aparecen 
+    los párrafos y las tablas en la página.
+    """
     texto = []
-    # 1. Párrafos normales
-    for p in doc.paragraphs:
-        if p.text.strip():
-            texto.append(p.text.strip())
-            
-    # 2. Contenido dentro de tablas (si existen)
-    for table in doc.tables:
-        for row in table.rows:
-            fila_txt = []
-            for cell in row.cells:
-                if cell.text.strip():
-                    fila_txt.append(cell.text.strip())
-            if fila_txt:
-                texto.append(" | ".join(fila_txt))
+    for element in doc.element.body:
+        # Si el elemento es un Párrafo
+        if element.tag.endswith('p'):
+            p = docx.text.paragraph.Paragraph(element, doc)
+            if p.text.strip():
+                texto.append(p.text.strip())
+        # Si el elemento es una Tabla
+        elif element.tag.endswith('tbl'):
+            table = docx.table.Table(element, doc)
+            for row in table.rows:
+                # Unir el texto de las celdas de la fila
+                celdas = [c.text.strip() for c in row.cells if c.text.strip()]
+                if celdas:
+                    # Si la fila tiene varias celdas, las unimos con espacio
+                    texto.append(" ".join(celdas))
                     
     return "\n".join(texto)
 
 def cargar_banco_preguntas(file_path):
     doc = docx.Document(file_path)
-    full_text = extraer_texto_completo(doc)
     
-    # Separar por número de pregunta (ej: "1000.", "1001.", "1000.-", etc.)
+    # 1. Extraer todo el texto en orden secuencial estricto
+    full_text = extraer_texto_secuencial(doc)
+    
+    # 2. Separar bloques por número de pregunta (ej: "1000.", "1001.", "1000.-")
     raw_blocks = re.split(r'\n(?=\d+[\.\)\-])', full_text)
     
     questions = []
@@ -42,37 +49,31 @@ def cargar_banco_preguntas(file_path):
         content = q_match.group(2).strip()
         
         # -------------------------------------------------------------
-        # 1. EXTRAER LA RESPUESTA CON PATRÓN AMPLIADO (MULTIVARIANTE)
+        # 3. BUSCAR LA RESPUESTA (Soporta RESPUESTA, RPTA, CLAVE, SOLUCION, RESP)
         # -------------------------------------------------------------
         correcta_val = ""
         
-        # Busca: RESPUESTA, RPTA, RPTA., RESP, CORRECTA (mayúsculas o minúsculas)
-        pos_resp = re.search(r'\b(RESPUESTA|RPTA|RESP|CORRECTA)\b', content, re.IGNORECASE)
+        # Buscar variantes comunes
+        pos_resp = re.search(r'\b(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA)\b', content, re.IGNORECASE)
         
         if pos_resp:
-            # Tomar texto desde donde se encuentra la etiqueta
+            # Tomar desde la palabra encontrada en adelante
             sub_str = content[pos_resp.start():]
             
-            # Quitar la etiqueta encontrada y símbolos como ':', '.', '-'
-            sub_str = re.sub(r'^(RESPUESTA|RPTA|RESP|CORRECTA)\s*[\.:\-\_]*\s*', '', sub_str, flags=re.IGNORECASE).strip()
+            # Limpiar la etiqueta encontrada y los símbolos que la acompañan (: . - _)
+            sub_str = re.sub(r'^(RESPUESTA|RPTA|CLAVE|SOLUCI[ÓO]N|RESP|CORRECTA)\s*[\.:\-\_]*\s*', '', sub_str, flags=re.IGNORECASE).strip()
             
             # Cortar si aparecen etiquetas de metadatos posteriores (UBICACIÓN, CÓDIGO, TEMA)
             corte_meta = re.split(r'\b(UBICACI[ÓO]N|C[ÓO]DIGO|TEMA|MODULO):', sub_str, flags=re.IGNORECASE)
             sub_str = corte_meta[0].strip()
             
-            # Tomar la primera línea válida o elemento
+            # Tomar la primera línea limpia
             lineas_resp = [l.strip() for l in sub_str.split('\n') if l.strip()]
             if lineas_resp:
-                val_candidato = lineas_resp[0]
-                # Si en esa línea hay separadores de tabla '|', tomar la parte relevante
-                if '|' in val_candidato:
-                    val_candidato = val_candidato.split('|')[0].strip()
-                
-                # Limpiar viñetas o caracteres extra
-                correcta_val = re.sub(r'^[»>•\-\*\s]+', '', val_candidato).strip()
+                correcta_val = re.sub(r'^[»>•\-\*\s]+', '', lineas_resp[0]).strip()
 
         # -------------------------------------------------------------
-        # 2. EXTRAER METADATOS (UBICACIÓN / CÓDIGO)
+        # 4. EXTRAER METADATOS (UBICACIÓN Y CÓDIGO)
         # -------------------------------------------------------------
         modulo_val = ""
         ubic_match = re.search(r'UBICACI[ÓO]N\s*:?\s*([^C\n]+)', content, re.IGNORECASE)
@@ -85,7 +86,7 @@ def cargar_banco_preguntas(file_path):
             codigo_val = cod_match.group(1).strip()
 
         # -------------------------------------------------------------
-        # 3. EXTRAER ENUNCIADO Y OPCIONES
+        # 5. EXTRAER ENUNCIADO Y OPCIONES
         # -------------------------------------------------------------
         texto_antes = content[:pos_resp.start()].strip() if pos_resp else content
         lineas = [l.strip() for l in texto_antes.split('\n') if l.strip()]
