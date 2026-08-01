@@ -6,7 +6,7 @@ def cargar_banco_preguntas(file_path):
     questions = []
     current_q = None
     
-    # Expresión regular para detectar el número de pregunta (ej: "1. TODA PERSONA...", "1000. COMETE DELITO...")
+    # Regex para el número de pregunta (ej: "1. TODA PERSONA...", "1000. COMETE DELITO...")
     q_pattern = re.compile(r'^\s*(\d+)[\.\)\-]\s*(.*)', re.IGNORECASE)
     
     for paragraph in doc.paragraphs:
@@ -17,10 +17,10 @@ def cargar_banco_preguntas(file_path):
         # 1. Detectar si inicia una nueva pregunta
         q_match = q_pattern.match(text)
         if q_match:
-            # Guardar pregunta anterior
+            # Guardar la pregunta anterior
             if current_q and current_q.get("pregunta"):
-                # Limpieza de seguridad si la respuesta quedó vacía o apuntó a metadatos
-                if not current_q["correcta"] or current_q["correcta"].upper().startswith(("UBICAC", "CÓDIG", "CODIG")):
+                # Si la respuesta quedó vacía o corrupta, usar la primera opción
+                if not current_q["correcta"] or "UBICACI" in current_q["correcta"].upper():
                     if current_q["opciones"]:
                         current_q["correcta"] = current_q["opciones"][0]
                 questions.append(current_q)
@@ -41,35 +41,36 @@ def cargar_banco_preguntas(file_path):
         if current_q is not None:
             text_upper = text.upper()
             
-            # 2. Capturar RESPUESTA:
+            # 2. Capturar RESPUESTA y amputar metadatos posteriores si están en la misma línea
             if text_upper.startswith("RESPUESTA:"):
-                ans_content = text.split(":", 1)[1].strip()
-                # Si hay contenido en la misma línea, guardarlo limpiando metadatos pegados
-                ans_clean = re.split(r'\b(UBICACIÓ|UBICACIO|CÓDIGO|CODIGO):', ans_content, flags=re.IGNORECASE)[0].strip()
-                if ans_clean:
-                    current_q["correcta"] = ans_clean
+                # Extraer lo que está después de "RESPUESTA:"
+                raw_ans = text.split(":", 1)[1].strip()
+                
+                # Eliminar todo desde UBICACIÓN: o CÓDIGO: hasta el final si vienen en la misma línea
+                clean_ans = re.sub(r'\s*(UBICACI[ÓO]N|C[ÓO]DIGO):.*$', '', raw_ans, flags=re.IGNORECASE).strip()
+                
+                current_q["correcta"] = clean_ans
                 continue
                 
-            # 3. Capturar UBICACIÓN:
+            # 3. Capturar UBICACIÓN solo para el campo de módulo
             if text_upper.startswith("UBICACIÓN:") or text_upper.startswith("UBICACION:"):
                 current_q["modulo"] = text.split(":", 1)[1].strip()
                 continue
                 
-            # 4. Capturar CÓDIGO:
+            # 4. Capturar CÓDIGO solo para la ID
             if text_upper.startswith("CÓDIGO:") or text_upper.startswith("CODIGO:"):
                 current_q["codigo_id"] = text.split(":", 1)[1].strip()
                 continue
             
-            # 5. Guardar Opciones (Excluyendo explícitamente cualquier metadato)
-            if not text_upper.startswith(("RESPUESTA:", "UBICACIÓN:", "UBICACION:", "CÓDIGO:", "CODIGO:")):
-                # Limpiar viñetas especiales (», >, •, -, *, etc.)
+            # 5. Si no es un encabezado de metadatos, procesar como Opción
+            if not any(text_upper.startswith(k) for k in ["RESPUESTA", "UBICACI", "CÓDIGO", "CODIGO"]):
                 clean_opt = re.sub(r'^[»>•\-\*\s]+', '', text).strip()
                 if clean_opt:
                     current_q["opciones"].append(clean_opt)
 
-    # Guardar la última pregunta del archivo Word
+    # Guardar la última pregunta del documento
     if current_q and current_q.get("pregunta"):
-        if not current_q["correcta"] or current_q["correcta"].upper().startswith(("UBICAC", "CÓDIG", "CODIG")):
+        if not current_q["correcta"] or "UBICACI" in current_q["correcta"].upper():
             if current_q["opciones"]:
                 current_q["correcta"] = current_q["opciones"][0]
         questions.append(current_q)
