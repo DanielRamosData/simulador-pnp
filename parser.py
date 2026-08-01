@@ -4,10 +4,10 @@ import re
 def cargar_banco_preguntas(file_path):
     doc = docx.Document(file_path)
     
-    # 1. Unir todos los párrafos en un solo texto con saltos de línea
+    # 1. Unir todo el texto en una sola cadena
     full_text = "\n".join([p.text.strip() for p in doc.paragraphs if p.text.strip()])
     
-    # 2. Separar el texto completo por cada número de pregunta (ej: "1000.", "1001.")
+    # 2. Separar por bloques usando los números de pregunta (ej: "1000.", "1062.")
     raw_blocks = re.split(r'\n(?=\d+[\.\)\-])', full_text)
     
     questions = []
@@ -17,41 +17,59 @@ def cargar_banco_preguntas(file_path):
         if not block:
             continue
             
-        # Validar si el bloque empieza con número de pregunta (ej: "1000. COMETE...")
         q_match = re.match(r'^(\d+)[\.\)\-]\s*(.*)', block, re.DOTALL)
         if not q_match:
             continue
             
         q_num = int(q_match.group(1))
         content = q_match.group(2).strip()
+        lines = [l.strip() for l in content.split('\n') if l.strip()]
         
-        # 3. EXTRAER RESPUESTA (Cortando estrictamente antes de UBICACIÓN o CÓDIGO)
-        ans_match = re.search(r'RESPUESTA:\s*(.*?)(?=\s*(?:UBICACI[ÓO]N:|C[ÓO]DIGO:|$))', content, re.IGNORECASE | re.DOTALL)
-        correcta_val = ""
-        if ans_match:
-            # Tomamos la captura limpia y eliminamos saltos de línea o caracteres raros
-            linea_respuesta = ans_match.group(1).split('\n')[0].strip()
-            correcta_val = re.sub(r'^[»>•\-\*\s]+', '', linea_respuesta).strip()
-        
-        # 4. EXTRAER ENUNCIADO Y OPCIONES (Todo lo que está antes de "RESPUESTA:")
-        partes_antes_respuesta = re.split(r'RESPUESTA:', content, flags=re.IGNORECASE)[0].strip()
-        lineas = [l.strip() for l in partes_antes_respuesta.split('\n') if l.strip()]
-        
-        pregunta_texto = lineas[0] if lineas else ""
+        pregunta_texto = lines[0] if lines else ""
         opciones = []
+        correcta_val = ""
+        modulo_val = ""
+        codigo_val = f"PNP-{q_num}"
         
-        for linea in lineas[1:]:
-            clean_opt = re.sub(r'^[»>•\-\*\s]+', '', linea).strip()
+        # 3. Procesar línea por línea dentro del bloque para máxima precisión
+        for line in lines[1:]:
+            l_upper = line.upper()
+            
+            # Detectar variantes de RESPUESTA / RPTA
+            if "RESPUESTA" in l_upper or "RPTA" in l_upper:
+                # Extraer todo lo que está después del primer dos puntos ':'
+                if ":" in line:
+                    val = line.split(":", 1)[1].strip()
+                else:
+                    val = re.sub(r'^(RESPUESTA|RPTA)\s*', '', line, flags=re.IGNORECASE).strip()
+                
+                # Cortar si viene pegado UBICACIÓN o CÓDIGO en la misma línea
+                val_clean = re.split(r'\b(UBICACI[ÓO]N|C[ÓO]DIGO):', val, flags=re.IGNORECASE)[0].strip()
+                correcta_val = re.sub(r'^[»>•\-\*\s]+', '', val_clean).strip()
+                continue
+                
+            # Detectar UBICACIÓN
+            if "UBICACI" in l_upper:
+                if ":" in line:
+                    modulo_val = line.split(":", 1)[1].strip()
+                continue
+                
+            # Detectar CÓDIGO
+            if "CÓDIGO" in l_upper or "CODIGO" in l_upper:
+                if ":" in line:
+                    codigo_val = line.split(":", 1)[1].strip()
+                continue
+                
+            # Si no es ninguna etiqueta de metadato, es una opción de respuesta
+            clean_opt = re.sub(r'^[»>•\-\*\s]+', '', line).strip()
             if clean_opt:
                 opciones.append(clean_opt)
-                
-        # 5. Extraer UBICACIÓN y CÓDIGO
-        ubic_match = re.search(r'UBICACI[ÓO]N:\s*(.*?)(?=\s*(?:C[ÓO]DIGO:|$))', content, re.IGNORECASE | re.DOTALL)
-        cod_match = re.search(r'C[ÓO]DIGO:\s*(.*)', content, re.IGNORECASE)
         
-        modulo_val = ubic_match.group(1).split('\n')[0].strip() if ubic_match else ""
-        codigo_val = cod_match.group(1).split('\n')[0].strip() if cod_match else f"PNP-{q_num}"
-        
+        # Respaldo: Si no se detectó "RESPUESTA:", tomar la última opción si existe
+        if not correcta_val and opciones:
+            # En algunos formatos la última opción/línea marcada es la correcta
+            pass
+
         questions.append({
             "num": q_num,
             "pregunta": pregunta_texto,
