@@ -142,6 +142,29 @@ elif st.session_state.examen_finalizado:
     
     st.subheader(f"Nota Final: **{nota:.2f} / 20**")
     st.markdown("---")
+    import pandas as pd
+    
+    st.subheader("📋 DETALLE DE PREGUNTAS A REVISAR")
+    filas_tabla = []
+    for q in preguntas:
+        user_ans = st.session_state.respuestas_modulo.get(q["num"], "Sin responder")
+        rpta_correcta = q["correcta"]
+        if user_ans != rpta_correcta:
+            filas_tabla.append({
+                "#": q["num"],
+                "Enunciado de la Pregunta": q["pregunta"],
+                "Tu Respuesta": user_ans,
+                "Rpta. Correcta": rpta_correcta
+            })
+    
+    if filas_tabla:
+        st.dataframe(pd.DataFrame(filas_tabla), use_container_width=True)
+    else:
+        st.info("¡Respondiste todas las preguntas correctamente!")
+    st.markdown("---")
+
+
+    
     
     # PDF de retroalimentación
     pdf_bytes = generar_pdf_reporte(
